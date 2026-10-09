@@ -22,7 +22,7 @@ import (
 )
 
 // fakeSigner is an in-memory TokenService that mints opaque tokens carrying a subject,
-// an issued-at time and an optional authentication method, without any real signing
+// an issued-at time, an expiration, a token ID and an optional authentication method, without any real signing
 type fakeSigner struct {
 	tokens  map[string]jwt.Token
 	counter int
@@ -32,10 +32,15 @@ func newFakeSigner() *fakeSigner {
 	return &fakeSigner{tokens: map[string]jwt.Token{}}
 }
 
-func (s *fakeSigner) GenerateAccessToken(user model.User, authenticationMethod string, _ time.Duration) (string, error) {
+func (s *fakeSigner) GenerateAccessToken(user model.User, authenticationMethod string, sessionDuration time.Duration) (string, error) {
+	s.counter++
+	raw := fmt.Sprintf("fake-access-token-%d", s.counter)
+
 	builder := jwt.NewBuilder().
 		Subject(user.ID).
-		IssuedAt(time.Now())
+		IssuedAt(time.Now()).
+		Expiration(time.Now().Add(sessionDuration)).
+		JwtID(raw)
 	if authenticationMethod != "" {
 		builder = builder.Claim(common.AuthenticationMethodsClaim, []string{authenticationMethod})
 	}
@@ -44,8 +49,6 @@ func (s *fakeSigner) GenerateAccessToken(user model.User, authenticationMethod s
 		return "", err
 	}
 
-	s.counter++
-	raw := fmt.Sprintf("fake-access-token-%d", s.counter)
 	s.tokens[raw] = token
 	return raw, nil
 }
@@ -84,7 +87,7 @@ func TestCreateReauthenticationTokenWithAccessToken(t *testing.T) {
 		require.NoError(t, db.Create(&user).Error)
 
 		signer := newFakeSigner()
-		return &Service{db: db, signer: signer}, signer, user
+		return &Service{db: db, signer: signer, revokedSessions: testutils.NewActorHostForTest(t, nil).Service()}, signer, user
 	}
 
 	t.Run("accepts a fresh access token from WebAuthn login", func(t *testing.T) {
@@ -120,6 +123,18 @@ func TestCreateReauthenticationTokenWithAccessToken(t *testing.T) {
 		assert.Empty(t, reauthenticationToken)
 		require.Error(t, err)
 		assert.True(t, apperror.IsCode(err, apperror.CodeReauthenticationRequired))
+	})
+
+	t.Run("rejects an access token revoked on logout", func(t *testing.T) {
+		service, signer, user := setupService(t)
+		accessToken, err := signer.GenerateAccessToken(user, authenticationMethodPhishingResistant, time.Hour)
+		require.NoError(t, err)
+		require.NoError(t, service.RevokeSession(t.Context(), accessToken))
+
+		reauthenticationToken, err := service.CreateReauthenticationTokenWithAccessToken(t.Context(), accessToken)
+
+		assert.Empty(t, reauthenticationToken)
+		require.True(t, apperror.IsCode(err, apperror.CodeReauthenticationRequired))
 	})
 
 	t.Run("classifies an invalid access token as missing reauthentication", func(t *testing.T) {

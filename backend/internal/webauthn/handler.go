@@ -155,6 +155,16 @@ func (h *handler) deleteCredential(c *gin.Context) error {
 		return err
 	}
 
+	// Removing a passkey signs out every session, so give the current one a new token to stay signed in
+	accessToken, err := c.Cookie(cookie.AccessTokenCookieName)
+	if err == nil {
+		newToken, sessionDuration, err := h.service.RenewSession(c.Request.Context(), accessToken)
+		if err != nil {
+			return err
+		}
+		cookie.AddAccessTokenCookie(c, int(sessionDuration.Seconds()), newToken)
+	}
+
 	c.Status(http.StatusNoContent)
 	return nil
 }
@@ -183,6 +193,15 @@ func (h *handler) updateCredential(c *gin.Context) error {
 }
 
 func (h *handler) logout(c *gin.Context) error {
+	// Revoke the token itself, because clearing the cookie does not invalidate copies of it
+	accessToken, err := c.Cookie(cookie.AccessTokenCookieName)
+	if err == nil {
+		err = h.service.RevokeSession(c.Request.Context(), accessToken)
+		if err != nil {
+			return err
+		}
+	}
+
 	cookie.AddAccessTokenCookie(c, 0, "")
 	c.Status(http.StatusNoContent)
 	return nil

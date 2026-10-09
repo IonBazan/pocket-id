@@ -7,16 +7,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pocket-id/pocket-id/backend/internal/apperror"
 	"github.com/pocket-id/pocket-id/backend/internal/service"
+	"github.com/pocket-id/pocket-id/backend/internal/sessionrevocation"
 	"github.com/pocket-id/pocket-id/backend/internal/utils/cookie"
 )
 
 type JwtAuthMiddleware struct {
-	userService *service.UserService
-	jwtService  *service.JwtService
+	userService     *service.UserService
+	jwtService      *service.JwtService
+	revokedSessions sessionrevocation.StateStore
 }
 
-func NewJwtAuthMiddleware(jwtService *service.JwtService, userService *service.UserService) *JwtAuthMiddleware {
-	return &JwtAuthMiddleware{jwtService: jwtService, userService: userService}
+func NewJwtAuthMiddleware(jwtService *service.JwtService, userService *service.UserService, revokedSessions sessionrevocation.StateStore) *JwtAuthMiddleware {
+	return &JwtAuthMiddleware{jwtService: jwtService, userService: userService, revokedSessions: revokedSessions}
 }
 
 func (m *JwtAuthMiddleware) Add(adminRequired bool) gin.HandlerFunc {
@@ -71,6 +73,15 @@ func (m *JwtAuthMiddleware) Verify(c *gin.Context, adminRequired bool) (subject 
 
 	if user.Disabled {
 		return "", false, "", time.Time{}, apperror.UserDisabled()
+	}
+
+	// Reject sessions that were signed out, because clearing the cookie does not invalidate copies of the token
+	revoked, err := sessionrevocation.IsRevoked(c.Request.Context(), m.revokedSessions, token, user)
+	if err != nil {
+		return "", false, "", time.Time{}, err
+	}
+	if revoked {
+		return "", false, "", time.Time{}, apperror.NotSignedIn()
 	}
 
 	if adminRequired && !user.IsAdmin {

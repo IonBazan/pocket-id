@@ -141,3 +141,35 @@ func TestCreateUserBumpsDefaultGroupUpdatedAt(t *testing.T) {
 	require.NotNil(t, updated.UpdatedAt, "adding a default group member must bump the group's UpdatedAt")
 	require.Len(t, updated.Users, 1)
 }
+
+func TestUpdateUserRevokesSessionsOnDemotionAndDisable(t *testing.T) {
+	config := &appconfig.AppConfigModel{RequireUserEmail: "false"}
+	userService, _ := newTestUserService(t)
+
+	input := dto.UserCreateDto{
+		Username:  "admin",
+		FirstName: "Admin",
+		IsAdmin:   true,
+	}
+	user, err := userService.CreateUser(t.Context(), config, input)
+	require.NoError(t, err)
+
+	// Changing other fields keeps existing sessions
+	input.FirstName = "Renamed"
+	user, err = userService.UpdateUser(t.Context(), config, user.ID, input, false, false)
+	require.NoError(t, err)
+	require.Nil(t, user.SessionsValidAfter)
+
+	// Demoting the admin revokes their sessions
+	input.IsAdmin = false
+	user, err = userService.UpdateUser(t.Context(), config, user.ID, input, false, false)
+	require.NoError(t, err)
+	require.NotNil(t, user.SessionsValidAfter)
+
+	// Disabling the user revokes their sessions again
+	require.NoError(t, userService.db.Model(&user).Update("sessions_valid_after", nil).Error)
+	input.Disabled = true
+	user, err = userService.UpdateUser(t.Context(), config, user.ID, input, false, false)
+	require.NoError(t, err)
+	require.NotNil(t, user.SessionsValidAfter)
+}

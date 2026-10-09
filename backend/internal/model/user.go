@@ -26,6 +26,9 @@ type User struct {
 	Disabled      bool `sortable:"true" filterable:"true"`
 	UpdatedAt     *datatype.DateTime
 
+	// Session tokens issued before this time are rejected
+	SessionsValidAfter *datatype.DateTime
+
 	CustomClaims []CustomClaim
 	UserGroups   []UserGroup `gorm:"many2many:user_groups_users;"`
 	Credentials  []WebauthnCredential

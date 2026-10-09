@@ -43,7 +43,7 @@ func TestImageUploadRoutesLimitRequestSize(t *testing.T) {
 	apiKeyModule, err := apikey.New(t.Context(), apikey.Dependencies{DB: db, CleanupDisabled: true})
 	require.NoError(t, err)
 
-	authMiddleware := middleware.NewAuthMiddleware(apiKeyModule, userService, jwtService)
+	authMiddleware := middleware.NewAuthMiddleware(apiKeyModule, userService, jwtService, testutils.NewActorHostForTest(t, nil).Service())
 	fileSizeLimitMiddleware := middleware.NewFileSizeLimitMiddleware()
 
 	user := model.User{Username: "upload-admin", IsAdmin: true}

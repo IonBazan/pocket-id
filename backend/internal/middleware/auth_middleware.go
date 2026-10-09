@@ -5,6 +5,7 @@ import (
 	"github.com/pocket-id/pocket-id/backend/internal/apikey"
 	"github.com/pocket-id/pocket-id/backend/internal/apperror"
 	"github.com/pocket-id/pocket-id/backend/internal/service"
+	"github.com/pocket-id/pocket-id/backend/internal/sessionrevocation"
 )
 
 // AuthMiddleware is a wrapper middleware that delegates to either API key or JWT authentication
@@ -24,10 +25,11 @@ func NewAuthMiddleware(
 	apiKeyModule *apikey.Module,
 	userService *service.UserService,
 	jwtService *service.JwtService,
+	revokedSessions sessionrevocation.StateStore,
 ) *AuthMiddleware {
 	return &AuthMiddleware{
 		apiKeyMiddleware: NewApiKeyAuthMiddleware(apiKeyModule, jwtService),
-		jwtMiddleware:    NewJwtAuthMiddleware(jwtService, userService),
+		jwtMiddleware:    NewJwtAuthMiddleware(jwtService, userService, revokedSessions),
 		options: AuthOptions{
 			AdminRequired:   true,
 			SuccessOptional: false,

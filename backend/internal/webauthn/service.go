@@ -18,6 +18,7 @@ import (
 	"github.com/pocket-id/pocket-id/backend/internal/auditlogs"
 	"github.com/pocket-id/pocket-id/backend/internal/model"
 	datatype "github.com/pocket-id/pocket-id/backend/internal/model/types"
+	"github.com/pocket-id/pocket-id/backend/internal/sessionrevocation"
 	"github.com/pocket-id/pocket-id/backend/internal/utils"
 )
 
@@ -31,10 +32,11 @@ const defaultRPDisplayName = "Pocket ID"
 const missingUserVerificationErrorInfo = "User verification required but flag not set by authenticator"
 
 type Service struct {
-	db       *gorm.DB
-	webAuthn *gowebauthn.WebAuthn
-	signer   TokenService
-	auditLog AuditLogger
+	db              *gorm.DB
+	webAuthn        *gowebauthn.WebAuthn
+	signer          TokenService
+	auditLog        AuditLogger
+	revokedSessions sessionrevocation.StateStore
 }
 
 func newService(deps Dependencies) (*Service, error) {
@@ -63,12 +65,17 @@ func newService(deps Dependencies) (*Service, error) {
 		return nil, fmt.Errorf("failed to init webauthn object: %w", err)
 	}
 
-	return &Service{
+	service := &Service{
 		db:       deps.DB,
 		webAuthn: wa,
 		signer:   deps.Signer,
 		auditLog: deps.AuditLog,
-	}, nil
+	}
+	if deps.Actors != nil {
+		service.revokedSessions = deps.Actors.Service()
+	}
+
+	return service, nil
 }
 
 func (s *Service) BeginRegistration(ctx context.Context, dbConfig *appconfig.AppConfigModel, userID string) (*PublicKeyCredentialCreationOptions, error) {
@@ -381,12 +388,62 @@ func (s *Service) DeleteCredential(ctx context.Context, userID string, credentia
 	}
 	s.auditLog.Create(ctx, auditlogs.EventPasskeyRemoved, ipAddress, userAgent, userID, auditLogData, tx)
 
-	err := tx.Commit().Error
+	// A removed passkey may have been compromised, so end every session it could have created
+	err := sessionrevocation.RevokeAllForUser(ctx, tx, userID)
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit().Error
 	if err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return nil
+}
+
+// RevokeSession revokes a single session token, so a copy of it cannot be used after logout
+func (s *Service) RevokeSession(ctx context.Context, accessToken string) error {
+	token, err := s.signer.VerifyAccessToken(accessToken)
+	if err != nil {
+		// An invalid or expired token cannot be used anyway
+		return nil
+	}
+
+	return sessionrevocation.RevokeToken(ctx, s.revokedSessions, token)
+}
+
+// RenewSession issues a new token for the session of the given access token, keeping its authentication method and expiration
+// It's used after the user's sessions were revoked, so the session that triggered the revocation stays signed in
+func (s *Service) RenewSession(ctx context.Context, accessToken string) (string, time.Duration, error) {
+	token, err := s.signer.VerifyAccessToken(accessToken)
+	if err != nil {
+		return "", 0, apperror.NotSignedIn()
+	}
+
+	userID, _ := token.Subject()
+	authenticationMethod, err := s.signer.GetAuthenticationMethod(token)
+	if err != nil {
+		return "", 0, apperror.NotSignedIn()
+	}
+	expiration, _ := token.Expiration()
+	sessionDuration := time.Until(expiration)
+
+	var user model.User
+	err = s.db.
+		WithContext(ctx).
+		First(&user, "id = ?", userID).
+		Error
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to load user: %w", err)
+	}
+
+	newToken, err := s.signer.GenerateAccessToken(user, authenticationMethod, sessionDuration)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return newToken, sessionDuration, nil
 }
 
 func (s *Service) UpdateCredential(ctx context.Context, userID, credentialID, name string) (model.WebauthnCredential, error) {
@@ -502,6 +559,14 @@ func (s *Service) CreateReauthenticationTokenWithAccessToken(ctx context.Context
 	}
 	if err != nil {
 		return "", fmt.Errorf("failed to load user: %w", err)
+	}
+
+	revoked, err := sessionrevocation.IsRevoked(ctx, s.revokedSessions, token, user)
+	if err != nil {
+		return "", err
+	}
+	if revoked {
+		return "", apperror.ReauthenticationRequired()
 	}
 
 	reauthToken, err := s.createReauthenticationToken(ctx, tx, user.ID)

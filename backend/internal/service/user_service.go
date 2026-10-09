@@ -23,6 +23,7 @@ import (
 	"github.com/pocket-id/pocket-id/backend/internal/dto"
 	"github.com/pocket-id/pocket-id/backend/internal/model"
 	datatype "github.com/pocket-id/pocket-id/backend/internal/model/types"
+	"github.com/pocket-id/pocket-id/backend/internal/sessionrevocation"
 	"github.com/pocket-id/pocket-id/backend/internal/storage"
 	"github.com/pocket-id/pocket-id/backend/internal/utils"
 	profilepicture "github.com/pocket-id/pocket-id/backend/internal/utils/image"
@@ -548,6 +549,11 @@ func (s *UserService) UpdateUserInternal(ctx context.Context, cfg *appconfig.App
 
 		// Admin-only fields: Only allow updates when not updating own account
 		if !updateOwnUser {
+			// Demoting or disabling a user ends their existing sessions, so a copied token cannot outlive the change
+			if (user.IsAdmin && !updatedUser.IsAdmin) || (!user.Disabled && updatedUser.Disabled) {
+				user.SessionsValidAfter = new(datatype.DateTime(time.Now()))
+			}
+
 			user.IsAdmin = updatedUser.IsAdmin
 			user.EmailVerified = updatedUser.EmailVerified
 			user.Disabled = updatedUser.Disabled
@@ -702,6 +708,16 @@ func (s *UserService) ResetProfilePicture(ctx context.Context, userID string) er
 	return nil
 }
 
+// RevokeSessions signs the user out of every session issued until now
+func (s *UserService) RevokeSessions(ctx context.Context, userID string) error {
+	_, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	return sessionrevocation.RevokeAllForUser(ctx, s.db, userID)
+}
+
 // DisableUserInternal disables a user within an existing transaction
 // It's exported for the LDAP sync, which soft-deletes users that are no longer in the directory
 func (s *UserService) DisableUserInternal(ctx context.Context, tx *gorm.DB, userID string) error {
@@ -709,7 +725,10 @@ func (s *UserService) DisableUserInternal(ctx context.Context, tx *gorm.DB, user
 		WithContext(ctx).
 		Model(&model.User{}).
 		Where("id = ?", userID).
-		Update("disabled", true).
+		Updates(map[string]any{
+			"disabled":             true,
+			"sessions_valid_after": datatype.DateTime(time.Now()),
+		}).
 		Error
 
 	if err != nil {

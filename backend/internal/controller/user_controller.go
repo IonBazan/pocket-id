@@ -13,6 +13,7 @@ import (
 	"github.com/pocket-id/pocket-id/backend/internal/middleware"
 	"github.com/pocket-id/pocket-id/backend/internal/service"
 	"github.com/pocket-id/pocket-id/backend/internal/utils"
+	"github.com/pocket-id/pocket-id/backend/internal/utils/cookie"
 	"github.com/pocket-id/pocket-id/backend/internal/webauthn"
 )
 
@@ -37,6 +38,8 @@ func NewUserController(group *gin.RouterGroup, authMiddleware *middleware.AuthMi
 	group.PUT("/users/me", authMiddleware.WithAdminNotRequired().Add(), httpserver.Handle(uc.updateCurrentUserHandler))
 	group.DELETE("/users/:id", authMiddleware.Add(), httpserver.Handle(uc.deleteUserHandler))
 	group.DELETE("/users/:id/webauthn-credentials/:credentialId", authMiddleware.Add(), httpserver.Handle(uc.deleteUserWebauthnCredentialHandler))
+	group.POST("/users/me/revoke-sessions", authMiddleware.WithAdminNotRequired().Add(), httpserver.Handle(uc.revokeCurrentUserSessionsHandler))
+	group.POST("/users/:id/revoke-sessions", authMiddleware.Add(), httpserver.Handle(uc.revokeUserSessionsHandler))
 
 	group.PUT("/users/:id/user-groups", authMiddleware.Add(), httpserver.Handle(uc.updateUserGroups))
 
@@ -226,6 +229,42 @@ func (uc *UserController) deleteUserWebauthnCredentialHandler(c *gin.Context) er
 		c.Request.UserAgent(),
 		c.GetString("userID"),
 	)
+	if err != nil {
+		return err
+	}
+
+	c.Status(http.StatusNoContent)
+	return nil
+}
+
+// revokeCurrentUserSessionsHandler godoc
+// @Summary Sign out everywhere
+// @Description Sign the current user out of every session, including the current one
+// @Tags Users
+// @Success 204 "No Content"
+// @Failure default {object} dto.ErrorDto "Error"
+// @Router /api/users/me/revoke-sessions [post]
+func (uc *UserController) revokeCurrentUserSessionsHandler(c *gin.Context) error {
+	err := uc.userService.RevokeSessions(c.Request.Context(), c.GetString("userID"))
+	if err != nil {
+		return err
+	}
+
+	cookie.AddAccessTokenCookie(c, 0, "")
+	c.Status(http.StatusNoContent)
+	return nil
+}
+
+// revokeUserSessionsHandler godoc
+// @Summary Sign user out everywhere
+// @Description Sign a user out of every session
+// @Tags Users
+// @Param id path string true "User ID"
+// @Success 204 "No Content"
+// @Failure default {object} dto.ErrorDto "Error"
+// @Router /api/users/{id}/revoke-sessions [post]
+func (uc *UserController) revokeUserSessionsHandler(c *gin.Context) error {
+	err := uc.userService.RevokeSessions(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		return err
 	}

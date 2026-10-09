@@ -17,6 +17,7 @@ import (
 	"github.com/pocket-id/pocket-id/backend/internal/model"
 	datatype "github.com/pocket-id/pocket-id/backend/internal/model/types"
 	"github.com/pocket-id/pocket-id/backend/internal/service"
+	"github.com/pocket-id/pocket-id/backend/internal/sessionrevocation"
 	"github.com/pocket-id/pocket-id/backend/internal/utils"
 	testutils "github.com/pocket-id/pocket-id/backend/internal/utils/testing"
 )
@@ -43,7 +44,7 @@ func TestWithApiKeyAuthDisabled(t *testing.T) {
 	apiKeyModule, err := apikey.New(t.Context(), apikey.Dependencies{DB: db, CleanupDisabled: true})
 	require.NoError(t, err)
 
-	authMiddleware := NewAuthMiddleware(apiKeyModule, userService, jwtService)
+	authMiddleware := NewAuthMiddleware(apiKeyModule, userService, jwtService, testutils.NewActorHostForTest(t, nil).Service())
 
 	user := createUserForAuthMiddlewareTest(t, db)
 	jwtToken, err := jwtService.GenerateAccessToken(user, "", time.Hour)
@@ -105,4 +106,73 @@ func createUserForAuthMiddlewareTest(t *testing.T, db *gorm.DB) model.User {
 	require.NoError(t, err)
 
 	return user
+}
+
+func TestRejectsRevokedSessions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalEnvConfig := common.EnvConfig
+	defer func() {
+		common.EnvConfig = originalEnvConfig
+	}()
+	common.EnvConfig.AppURL = "https://test.example.com"
+	common.EnvConfig.EncryptionKey = []byte("0123456789abcdef0123456789abcdef")
+
+	db := testutils.NewDatabaseForTest(t)
+
+	instanceID, err := instanceid.Load(t.Context(), db)
+	require.NoError(t, err)
+
+	jwtService, err := service.NewJwtService(t.Context(), db, instanceID)
+	require.NoError(t, err)
+
+	userService := service.NewUserService(db, jwtService, nil, nil, nil, nil, nil)
+	apiKeyModule, err := apikey.New(t.Context(), apikey.Dependencies{DB: db, CleanupDisabled: true})
+	require.NoError(t, err)
+
+	store := testutils.NewActorHostForTest(t, nil).Service()
+	authMiddleware := NewAuthMiddleware(apiKeyModule, userService, jwtService, store)
+
+	user := createUserForAuthMiddlewareTest(t, db)
+
+	router := gin.New()
+	router.Use(NewErrorHandlerMiddleware().Add())
+	router.GET("/api/protected", authMiddleware.WithAdminNotRequired().Add(), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	request := func(t *testing.T, accessToken string) int {
+		t.Helper()
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		return recorder.Code
+	}
+
+	t.Run("rejects a token revoked on logout", func(t *testing.T) {
+		accessToken, err := jwtService.GenerateAccessToken(user, "", time.Hour)
+		require.NoError(t, err)
+		otherToken, err := jwtService.GenerateAccessToken(user, "", time.Hour)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNoContent, request(t, accessToken))
+
+		token, err := jwtService.VerifyAccessToken(accessToken)
+		require.NoError(t, err)
+		require.NoError(t, sessionrevocation.RevokeToken(t.Context(), store, token))
+
+		require.Equal(t, http.StatusUnauthorized, request(t, accessToken))
+		require.Equal(t, http.StatusNoContent, request(t, otherToken))
+	})
+
+	t.Run("rejects tokens issued before the user's cutoff", func(t *testing.T) {
+		accessToken, err := jwtService.GenerateAccessToken(user, "", time.Hour)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNoContent, request(t, accessToken))
+
+		cutoff := datatype.DateTime(time.Now().Add(time.Minute))
+		require.NoError(t, db.Model(&model.User{}).Where("id = ?", user.ID).Update("sessions_valid_after", cutoff).Error)
+
+		require.Equal(t, http.StatusUnauthorized, request(t, accessToken))
+	})
 }
