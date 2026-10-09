@@ -57,6 +57,14 @@ export default class UserService extends APIService {
 		await this.api.delete(`/users/${userId}/webauthn-credentials/${passkeyId}`);
 	};
 
+	revokeSessions = async (userId: string) => {
+		await this.api.post(`/users/${userId}/revoke-sessions`);
+	};
+
+	revokeCurrentSessions = async () => {
+		await this.api.post('/users/me/revoke-sessions');
+	};
+
 	updateProfilePicture = async (userId: string, image: File) => {
 		const formData = new FormData();
 		formData.append('file', image!);

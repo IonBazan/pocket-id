@@ -5,7 +5,7 @@ import userStore from '#lib/stores/user-store.ts';
 import type { AdvancedTableAction } from '#lib/types/advanced-table.type.ts';
 import type { User } from '#lib/types/user.type.ts';
 import { axiosErrorToast } from '#lib/utils/error-util.ts';
-import { LucideLink, LucideTrash } from '@lucide/svelte';
+import { LucideLink, LucideLogOut, LucideTrash } from '@lucide/svelte';
 import { toast } from 'svelte-sonner';
 import { get } from 'svelte/store';
 
@@ -13,6 +13,31 @@ const userService = new UserService();
 
 export function loginCodeAction(onClick: (user: User) => void): AdvancedTableAction<User> {
 	return { label: m.login_code(), icon: LucideLink, onClick };
+}
+
+export function revokeSessionsAction(user: User): AdvancedTableAction<User> {
+	return {
+		label: m.sign_out_everywhere(),
+		icon: LucideLogOut,
+		onClick: (user) =>
+			openConfirmDialog({
+				title: m.sign_out_everywhere(),
+				message: m.are_you_sure_you_want_to_sign_out_this_user_everywhere(),
+				confirm: {
+					label: m.sign_out_everywhere(),
+					destructive: true,
+					action: async () => {
+						try {
+							await userService.revokeSessions(user.id);
+							toast.success(m.user_signed_out_everywhere());
+						} catch (e) {
+							axiosErrorToast(e);
+						}
+					}
+				}
+			}),
+		disabled: user.id === get(userStore)?.id
+	};
 }
 
 export function deleteUserAction(user: User, onDeleted: () => unknown): AdvancedTableAction<User> {

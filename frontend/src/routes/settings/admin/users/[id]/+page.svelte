@@ -19,7 +19,7 @@
 	import { KeyRound, LucideChevronLeft } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
 	import { backNavigate } from '../navigate-back-util';
-	import { deleteUserAction, loginCodeAction } from '../user-actions';
+	import { deleteUserAction, loginCodeAction, revokeSessionsAction } from '../user-actions';
 	import UserForm from '../user-form.svelte';
 	import AdminPasskeyList from './admin-passkey-list.svelte';
 
@@ -37,6 +37,7 @@
 
 	const actions = $derived([
 		loginCodeAction((u) => (userIdToCreateOneTimeLink = u.id)),
+		revokeSessionsAction(user),
 		deleteUserAction(user, backNavigation.leave)
 	]);
 

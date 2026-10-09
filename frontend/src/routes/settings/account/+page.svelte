@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { openConfirmDialog } from '#lib/components/confirm-dialog/index.ts';
 	import FormattedMessage from '#lib/components/formatted-message.svelte';
 	import * as Alert from '#lib/components/ui/alert/index.ts';
 	import { Button } from '#lib/components/ui/button/index.ts';
@@ -11,8 +13,8 @@
 	import userStore from '#lib/stores/user-store.ts';
 	import type { Passkey } from '#lib/types/passkey.type.ts';
 	import type { AccountUpdate } from '#lib/types/user.type.ts';
-	import { getWebauthnErrorMessage } from '#lib/utils/error-util.ts';
-	import { KeyRound, Languages, LucideAlertTriangle, UserCog } from '@lucide/svelte';
+	import { axiosErrorToast, getWebauthnErrorMessage } from '#lib/utils/error-util.ts';
+	import { KeyRound, Languages, LucideAlertTriangle, LucideLogOut, UserCog } from '@lucide/svelte';
 	import { startRegistration } from '@simplewebauthn/browser';
 	import { toast } from 'svelte-sonner';
 	import AccountForm from './account-form.svelte';
@@ -46,6 +48,25 @@
 		} catch (e) {
 			toast.error(getWebauthnErrorMessage(e));
 		}
+	}
+
+	function signOutEverywhere() {
+		openConfirmDialog({
+			title: m.sign_out_everywhere(),
+			message: m.are_you_sure_you_want_to_sign_out_everywhere(),
+			confirm: {
+				label: m.sign_out_everywhere(),
+				destructive: true,
+				action: async () => {
+					try {
+						await userService.revokeCurrentSessions();
+						goto('/login');
+					} catch (e) {
+						axiosErrorToast(e);
+					}
+				}
+			}
+		});
 	}
 </script>
 
@@ -136,6 +157,19 @@
 	</Item.Content>
 	<Item.Actions>
 		<LocalePicker />
+	</Item.Actions>
+</Item.Root>
+
+<Item.Root variant="card" class="border-border mb-2">
+	<Item.Media class="text-primary/80">
+		<LucideLogOut class="size-5" />
+	</Item.Media>
+	<Item.Content class="min-w-52">
+		<Item.Title>{m.sign_out_everywhere()}</Item.Title>
+		<Item.Description>{m.sign_out_everywhere_description()}</Item.Description>
+	</Item.Content>
+	<Item.Actions>
+		<Button variant="outline" onclick={signOutEverywhere}>{m.sign_out_everywhere()}</Button>
 	</Item.Actions>
 </Item.Root>
 

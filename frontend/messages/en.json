@@ -684,5 +684,10 @@
 	"client_type": "Client type",
 	"confidential_client": "Confidential Client",
 	"confidential_client_description": "Authenticates with a client secret. For apps with a backend that can keep the secret safe.",
-	"public_client_type_description": "Has no client secret and uses PKCE instead. For single-page, mobile and desktop apps."
+	"public_client_type_description": "Has no client secret and uses PKCE instead. For single-page, mobile and desktop apps.",
+	"sign_out_everywhere": "Sign out everywhere",
+	"sign_out_everywhere_description": "End every session of your account, including this one. Use this if you signed in on a device you no longer trust.",
+	"are_you_sure_you_want_to_sign_out_everywhere": "Are you sure you want to sign out of all sessions, including this one?",
+	"are_you_sure_you_want_to_sign_out_this_user_everywhere": "Are you sure you want to end all sessions of this user?",
+	"user_signed_out_everywhere": "The user has been signed out of all sessions"
 }

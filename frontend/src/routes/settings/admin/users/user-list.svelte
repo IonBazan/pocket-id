@@ -18,7 +18,7 @@
 	import { axiosErrorToast } from '#lib/utils/error-util.ts';
 	import { LucidePencil, LucideUserCheck, LucideUserX } from '@lucide/svelte';
 	import { toast } from 'svelte-sonner';
-	import { deleteUserAction, loginCodeAction } from './user-actions';
+	import { deleteUserAction, loginCodeAction, revokeSessionsAction } from './user-actions';
 
 	let userIdToCreateOneTimeLink: string | null = $state(null);
 	let tableRef: AdvancedTable<User>;
@@ -123,6 +123,7 @@
 			hidden: !!u.ldapId || $appConfigStore.ldapEnabled,
 			disabled: u.id === $userStore?.id
 		},
+		revokeSessionsAction(u),
 		deleteUserAction(u, refresh)
 	];
 </script>
